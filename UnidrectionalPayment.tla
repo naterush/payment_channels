@@ -15,7 +15,8 @@ CONSTANTS Deposit, Timeout
 
 
 (* --algorithm channel
-variables curr_value_to_receiver = 0, curr_nonce_to_receiver = 0, curr_value_to_chain = 0, curr_nonce_to_chain = 0, time_to_close = FALSE, sender_steal = FALSE;
+variables curr_value_to_receiver = 0, curr_nonce_to_receiver = 0, curr_value_to_chain = 0, curr_nonce_to_chain = 0, 
+    time_to_close = FALSE, sender_steal = FALSE;
 
 define
     UpdatesSmartContract(nonce) == nonce > curr_nonce_to_chain
@@ -217,6 +218,6 @@ ReceiverGetsMoney == <>(curr_value_to_chain = curr_value_to_receiver)
                  
 =============================================================================
 \* Modification History
-\* Last modified Mon Aug 19 23:59:21 EDT 2019 by nate
+\* Last modified Tue Aug 20 09:23:34 EDT 2019 by nate
 \* Last modified Sat Dec 22 14:17:18 PST 2018 by lamport
 \* Created Thu Dec 20 11:44:08 PST 2018 by lamport
