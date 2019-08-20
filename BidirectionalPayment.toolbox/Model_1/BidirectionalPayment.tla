@@ -44,13 +44,16 @@ begin
             or
                 (* The receiver gets one new message from sender, signs it also, and floats back towards the sender *)
                 ReceiverReceiveSignSend:
-                    max_signed_by_receiver :=  max_signed_by_receiver + 1;
-                    max_seen_signed_by_receiver := max_seen_signed_by_receiver + 1;
+                    if max_signed_by_sender > max_signed_by_receiver then
+                        max_signed_by_receiver :=  max_signed_by_receiver + 1;
+                        max_seen_signed_by_receiver := max_seen_signed_by_receiver + 1;
+                    end if;
             or
                 (* The sender receives the message from the receiver that is now signed by both *)
                 SenderReceive:
-                    max_seen_signed_by_sender := max_seen_signed_by_sender + 1;
-            
+                    if max_signed_by_receiver > max_seen_signed_by_sender then
+                        max_seen_signed_by_sender := max_seen_signed_by_sender + 1;
+                    end if;
             end either;
             Update:
                 num_sends_and_receives := num_sends_and_receives + 1;
@@ -285,6 +288,6 @@ CancelledOrFair == <>(exit_cancelled \/ curr_value_to_chain = message[max_seen_s
                  
 =============================================================================
 \* Modification History
-\* Last modified Tue Aug 20 11:59:00 EDT 2019 by nate
+\* Last modified Tue Aug 20 12:31:07 EDT 2019 by nate
 \* Last modified Sat Dec 22 14:17:18 PST 2018 by lamport
 \* Created Thu Dec 20 11:44:08 PST 2018 by lamport
