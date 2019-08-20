@@ -15,6 +15,7 @@ CONSTANTS Deposit
 
 (* --algorithm channel
 variables curr_value_to_receiver = 0, curr_nonce_to_receiver = 0, curr_value_to_chain = 0, curr_nonce_to_chain = 0;
+
 begin
     Exec:
         while curr_value_to_receiver < Deposit /\ curr_nonce_to_chain = 0 do
@@ -29,12 +30,17 @@ begin
               end with;
           or
             Settle:
-              with value \in 1..Deposit, nonce \in 1..Deposit do
-                if curr_nonce_to_chain < nonce then
-                    curr_value_to_chain := value;
-                    curr_nonce_to_chain := nonce;
-                end if;
-              end with;
+                (* The sender only tries to steal (they don't give money away)
+                 and so they only show messages with a value not greater than what
+                 they've actually sent *)
+              if curr_value_to_receiver > 0 then
+                  with value \in 1..curr_value_to_receiver, nonce \in 1..Deposit do
+                    if curr_nonce_to_chain < nonce then
+                        curr_value_to_chain := value;
+                        curr_nonce_to_chain := nonce;
+                    end if;
+                  end with;
+              end if;
           end either;
         end while;
     (* If the channel ever settles, or all money has been transfered, we have 
@@ -81,14 +87,17 @@ Transfer == /\ pc = "Transfer"
             /\ UNCHANGED << curr_value_to_chain, curr_nonce_to_chain >>
 
 Settle == /\ pc = "Settle"
-          /\ \E value \in 1..Deposit:
-               \E nonce \in 1..Deposit:
-                 IF curr_nonce_to_chain < nonce
-                    THEN /\ curr_value_to_chain' = value
-                         /\ curr_nonce_to_chain' = nonce
-                    ELSE /\ TRUE
-                         /\ UNCHANGED << curr_value_to_chain, 
-                                         curr_nonce_to_chain >>
+          /\ IF curr_value_to_receiver > 0
+                THEN /\ \E value \in 1..curr_value_to_receiver:
+                          \E nonce \in 1..Deposit:
+                            IF curr_nonce_to_chain < nonce
+                               THEN /\ curr_value_to_chain' = value
+                                    /\ curr_nonce_to_chain' = nonce
+                               ELSE /\ TRUE
+                                    /\ UNCHANGED << curr_value_to_chain, 
+                                                    curr_nonce_to_chain >>
+                ELSE /\ TRUE
+                     /\ UNCHANGED << curr_value_to_chain, curr_nonce_to_chain >>
           /\ pc' = "Exec"
           /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver >>
 
@@ -114,11 +123,13 @@ Termination == <>(pc = "Done")
 
 \* END TRANSLATION
 
-ReceiverGetsMoney == <>(curr_value_to_chain >= curr_value_to_receiver)
+(* note as the receiver can only get as much money as is sent by the sender
+this also says that the receiver loses the money they have sent, which is fair *)
+ReceiverGetsMoney == <>(curr_value_to_chain = curr_value_to_receiver)
 
                  
 =============================================================================
 \* Modification History
-\* Last modified Mon Aug 19 20:24:55 EDT 2019 by nate
+\* Last modified Mon Aug 19 20:39:44 EDT 2019 by nate
 \* Last modified Sat Dec 22 14:17:18 PST 2018 by lamport
 \* Created Thu Dec 20 11:44:08 PST 2018 by lamport
