@@ -2,77 +2,120 @@
 (***************************************************************************)
 (* This module specifies a unidrectional payment channel, where a user     *)
 (* can deposit money, and then send this money in increments to a receiver.*)
-(* The value sent to the receiver can _only_ increase!  *)
+(* The value sent to the receiver can _only_ increase, and as such this    *)
+(* this channel only requires signatures from the sender!                  *)
 (***************************************************************************)
 
-EXTENDS Integers, FiniteSets
+EXTENDS Integers
 
 (***************************************************************************)
 (* The deposit is the size that has been locked up on-chain                *)
 (***************************************************************************)
-CONSTANTS Deposit
+CONSTANTS Deposit, Timeout
 
 
 (* --algorithm channel
-variables curr_value_to_receiver = 0, curr_nonce_to_receiver = 0, curr_value_to_chain = 0, curr_nonce_to_chain = 0;
+variables curr_value_to_receiver = 0, curr_nonce_to_receiver = 0, curr_value_to_chain = 0, curr_nonce_to_chain = 0, time_to_close = FALSE, sender_steal = FALSE;
+
+define
+    UpdatesSmartContract(nonce) == nonce > curr_nonce_to_chain
+end define;
 
 begin
-    Exec:
-        while curr_value_to_receiver < Deposit /\ curr_nonce_to_chain = 0 do
-          either
-            Transfer:
-              with value \in 1..Deposit, nonce \in 1..Deposit do
-                (* receiver only accepts if nonce and value are incremented *)
-                if curr_nonce_to_receiver < nonce /\ curr_value_to_receiver < value then
-                    curr_value_to_receiver := value;
-                    curr_nonce_to_receiver := nonce;
-                end if;
-              end with;
-          or
-            Settle:
-                (* The sender only tries to steal (they don't give money away)
-                 and so they only show messages with a value not greater than what
-                 they've actually sent *)
-              if curr_value_to_receiver > 0 then
-                  with value \in 1..curr_value_to_receiver, nonce \in 1..Deposit do
-                    if curr_nonce_to_chain < nonce then
-                        curr_value_to_chain := value;
-                        curr_nonce_to_chain := nonce;
-                    end if;
-                  end with;
-              end if;
-          end either;
+    (* This is the off-chain execution of the channel, where the sender signs messages *)
+    (* and sends them to the receiver, or stops sending them. *)
+    Offchain:
+        while curr_value_to_receiver < Deposit /\ ~time_to_close do
+            either
+                Transfer:
+                    (* The sender in the channel continues to send messages*)
+                    with value \in 1..Deposit, nonce \in 1..Deposit do
+                        (* Only accept payments if the nonce and value are incremented *)
+                        if curr_nonce_to_receiver < nonce /\ curr_value_to_receiver < value then
+                            curr_value_to_receiver := value;
+                            curr_nonce_to_receiver := nonce;
+                        end if;
+                    end with;
+            or
+                DecideToClose:
+                    (* The sender in the channel stops sending messages, or the receiver wants to settle *)
+                    time_to_close := TRUE
+            end either;
         end while;
-    (* If the channel ever settles, or all money has been transfered, we have 
-    the receiver try and settle with the highest nonce (and thus value) that
-    they have, unless the value transfered to them onchain is higher *) 
-    FinalSettle:
-        if curr_nonce_to_chain < curr_nonce_to_receiver /\ curr_value_to_chain < curr_value_to_receiver then
-            curr_value_to_chain := curr_value_to_receiver;
-            curr_nonce_to_chain := curr_nonce_to_receiver;
-        end if;
+    (* This is the on-chain execution, which we model as happening after all off-chain interaction*)
+    (* In practice, parties can stop interacting after they see action on chain. *)
+    Onchain:
+        either
+            SenderFirst:
+                (* Sender lies to the smart contract first, and enters lockup period*)
+                if curr_value_to_receiver > 0 then
+                    (* They try and say they paid less than they actually did *)
+                    (* so they won't sign a message with a value greater than what they sent *)
+                    with value \in 1..curr_value_to_receiver, nonce \in 1..Deposit do
+                        if UpdatesSmartContract(nonce) then
+                            curr_value_to_chain := value;
+                            curr_nonce_to_chain := nonce;
+                        end if;
+                    end with;
+                end if;
+                
+                (* And now during the timeout the receiver comes along and challenges *)
+                if UpdatesSmartContract(curr_nonce_to_receiver) then
+                    Close:
+                        curr_value_to_chain := curr_value_to_receiver;
+                        curr_nonce_to_chain := curr_nonce_to_receiver;
+                end if;
+           
+        or
+            ReceiverFirst:
+                (* The receiver comes along and closes the channel first, entering timeout *)
+                if UpdatesSmartContract(curr_nonce_to_receiver) then
+                    curr_value_to_chain := curr_value_to_receiver;
+                    curr_nonce_to_chain := curr_nonce_to_receiver;
+                end if;
+                
+                (* The sender now has a chance to try and steal money *)
+                if curr_value_to_receiver > 0 then
+                    Challenge:
+                        (* Again, they don't send more than they actually paid *)
+                        with value \in 1..curr_value_to_receiver, nonce \in 1..Deposit do
+                            if UpdatesSmartContract(nonce) then
+                                curr_value_to_chain := value;
+                                curr_nonce_to_chain := nonce;
+                            end if;
+                        end with;
+                end if;
+        end either;
 end algorithm; *)
 \* BEGIN TRANSLATION
 VARIABLES curr_value_to_receiver, curr_nonce_to_receiver, curr_value_to_chain, 
-          curr_nonce_to_chain, pc
+          curr_nonce_to_chain, time_to_close, sender_steal, pc
+
+(* define statement *)
+UpdatesSmartContract(nonce) == nonce > curr_nonce_to_chain
+
 
 vars == << curr_value_to_receiver, curr_nonce_to_receiver, 
-           curr_value_to_chain, curr_nonce_to_chain, pc >>
+           curr_value_to_chain, curr_nonce_to_chain, time_to_close, 
+           sender_steal, pc >>
 
 Init == (* Global variables *)
         /\ curr_value_to_receiver = 0
         /\ curr_nonce_to_receiver = 0
         /\ curr_value_to_chain = 0
         /\ curr_nonce_to_chain = 0
-        /\ pc = "Exec"
+        /\ time_to_close = FALSE
+        /\ sender_steal = FALSE
+        /\ pc = "Offchain"
 
-Exec == /\ pc = "Exec"
-        /\ IF curr_value_to_receiver < Deposit /\ curr_nonce_to_chain = 0
-              THEN /\ \/ /\ pc' = "Transfer"
-                      \/ /\ pc' = "Settle"
-              ELSE /\ pc' = "FinalSettle"
-        /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
-                        curr_value_to_chain, curr_nonce_to_chain >>
+Offchain == /\ pc = "Offchain"
+            /\ IF curr_value_to_receiver < Deposit /\ ~time_to_close
+                  THEN /\ \/ /\ pc' = "Transfer"
+                          \/ /\ pc' = "DecideToClose"
+                  ELSE /\ pc' = "Onchain"
+            /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
+                            curr_value_to_chain, curr_nonce_to_chain, 
+                            time_to_close, sender_steal >>
 
 Transfer == /\ pc = "Transfer"
             /\ \E value \in 1..Deposit:
@@ -83,38 +126,82 @@ Transfer == /\ pc = "Transfer"
                       ELSE /\ TRUE
                            /\ UNCHANGED << curr_value_to_receiver, 
                                            curr_nonce_to_receiver >>
-            /\ pc' = "Exec"
-            /\ UNCHANGED << curr_value_to_chain, curr_nonce_to_chain >>
+            /\ pc' = "Offchain"
+            /\ UNCHANGED << curr_value_to_chain, curr_nonce_to_chain, 
+                            time_to_close, sender_steal >>
 
-Settle == /\ pc = "Settle"
-          /\ IF curr_value_to_receiver > 0
-                THEN /\ \E value \in 1..curr_value_to_receiver:
-                          \E nonce \in 1..Deposit:
-                            IF curr_nonce_to_chain < nonce
-                               THEN /\ curr_value_to_chain' = value
-                                    /\ curr_nonce_to_chain' = nonce
-                               ELSE /\ TRUE
-                                    /\ UNCHANGED << curr_value_to_chain, 
-                                                    curr_nonce_to_chain >>
-                ELSE /\ TRUE
-                     /\ UNCHANGED << curr_value_to_chain, curr_nonce_to_chain >>
-          /\ pc' = "Exec"
-          /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver >>
+DecideToClose == /\ pc = "DecideToClose"
+                 /\ time_to_close' = TRUE
+                 /\ pc' = "Offchain"
+                 /\ UNCHANGED << curr_value_to_receiver, 
+                                 curr_nonce_to_receiver, curr_value_to_chain, 
+                                 curr_nonce_to_chain, sender_steal >>
 
-FinalSettle == /\ pc = "FinalSettle"
-               /\ IF curr_nonce_to_chain < curr_nonce_to_receiver /\ curr_value_to_chain < curr_value_to_receiver
-                     THEN /\ curr_value_to_chain' = curr_value_to_receiver
-                          /\ curr_nonce_to_chain' = curr_nonce_to_receiver
+Onchain == /\ pc = "Onchain"
+           /\ \/ /\ pc' = "SenderFirst"
+              \/ /\ pc' = "ReceiverFirst"
+           /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
+                           curr_value_to_chain, curr_nonce_to_chain, 
+                           time_to_close, sender_steal >>
+
+SenderFirst == /\ pc = "SenderFirst"
+               /\ IF curr_value_to_receiver > 0
+                     THEN /\ \E value \in 1..curr_value_to_receiver:
+                               \E nonce \in 1..Deposit:
+                                 IF UpdatesSmartContract(nonce)
+                                    THEN /\ curr_value_to_chain' = value
+                                         /\ curr_nonce_to_chain' = nonce
+                                    ELSE /\ TRUE
+                                         /\ UNCHANGED << curr_value_to_chain, 
+                                                         curr_nonce_to_chain >>
                      ELSE /\ TRUE
                           /\ UNCHANGED << curr_value_to_chain, 
                                           curr_nonce_to_chain >>
-               /\ pc' = "Done"
-               /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver >>
+               /\ IF UpdatesSmartContract(curr_nonce_to_receiver)
+                     THEN /\ pc' = "Close"
+                     ELSE /\ pc' = "Done"
+               /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
+                               time_to_close, sender_steal >>
+
+Close == /\ pc = "Close"
+         /\ curr_value_to_chain' = curr_value_to_receiver
+         /\ curr_nonce_to_chain' = curr_nonce_to_receiver
+         /\ pc' = "Done"
+         /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
+                         time_to_close, sender_steal >>
+
+ReceiverFirst == /\ pc = "ReceiverFirst"
+                 /\ IF UpdatesSmartContract(curr_nonce_to_receiver)
+                       THEN /\ curr_value_to_chain' = curr_value_to_receiver
+                            /\ curr_nonce_to_chain' = curr_nonce_to_receiver
+                       ELSE /\ TRUE
+                            /\ UNCHANGED << curr_value_to_chain, 
+                                            curr_nonce_to_chain >>
+                 /\ IF curr_value_to_receiver > 0
+                       THEN /\ pc' = "Challenge"
+                       ELSE /\ pc' = "Done"
+                 /\ UNCHANGED << curr_value_to_receiver, 
+                                 curr_nonce_to_receiver, time_to_close, 
+                                 sender_steal >>
+
+Challenge == /\ pc = "Challenge"
+             /\ \E value \in 1..curr_value_to_receiver:
+                  \E nonce \in 1..Deposit:
+                    IF UpdatesSmartContract(nonce)
+                       THEN /\ curr_value_to_chain' = value
+                            /\ curr_nonce_to_chain' = nonce
+                       ELSE /\ TRUE
+                            /\ UNCHANGED << curr_value_to_chain, 
+                                            curr_nonce_to_chain >>
+             /\ pc' = "Done"
+             /\ UNCHANGED << curr_value_to_receiver, curr_nonce_to_receiver, 
+                             time_to_close, sender_steal >>
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == pc = "Done" /\ UNCHANGED vars
 
-Next == Exec \/ Transfer \/ Settle \/ FinalSettle
+Next == Offchain \/ Transfer \/ DecideToClose \/ Onchain \/ SenderFirst
+           \/ Close \/ ReceiverFirst \/ Challenge
            \/ Terminating
 
 Spec == Init /\ [][Next]_vars
@@ -130,6 +217,6 @@ ReceiverGetsMoney == <>(curr_value_to_chain = curr_value_to_receiver)
                  
 =============================================================================
 \* Modification History
-\* Last modified Mon Aug 19 20:39:44 EDT 2019 by nate
+\* Last modified Mon Aug 19 23:59:21 EDT 2019 by nate
 \* Last modified Sat Dec 22 14:17:18 PST 2018 by lamport
 \* Created Thu Dec 20 11:44:08 PST 2018 by lamport
